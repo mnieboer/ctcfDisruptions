@@ -64,11 +64,29 @@ with open(cosmicGeneFile, 'r') as inF:
 		cosmicGenes.append(line.split("\t")[0])
 		lineCount += 1
 	
+#Get all genes instead of just cosmic genes
+geneList = []
+with open(sys.argv[5], 'r') as geneFile:
+	
+	lineCount = 0
+	for line in geneFile:
+		line = line.strip()
+		splitLine = line.split("\t")
 
+		#Obtain the name, chromosome and positions of the gene. 
+		
+		geneID = splitLine[3]
+		
+		geneList.append(geneID)
+		
+
+#use all genes instead of cosmic
+cosmicGenes = geneList
 
 #genes = ['CTCF', 'RAD21', 'REC8', 'SMC1A', 'SMC1B', 'SMC3', 'STAG1', 'STAG2', 'STAG3']
 #Split into cohesin/CTCF only
 genes = ['CTCF']
+geneLocations = [['chr16', 67596310, 67673088]]
 #genes = ['RAD21', 'REC8', 'SMC1A', 'SMC1B', 'SMC3', 'STAG1', 'STAG2', 'STAG3']
 
 snvDir = sys.argv[3]
@@ -78,12 +96,13 @@ snvDir = sys.argv[3]
 mutatedGenesCount = dict()
 mutatedGenesCountWithExpression = dict()
 
-patientsWithMutations = []
-patientsWithoutMutations = []
+patientsWithSNVMutations = []
+patientsWithoutSNVMutations = []
 
 allFiles = [f for f in listdir(snvDir) if isfile(join(snvDir, f))]
 print len(allFiles)
 
+patientsNoExpr = []
 mutations = []
 for currentFile in allFiles:
 	
@@ -92,6 +111,8 @@ for currentFile in allFiles:
 	splitFileName = currentFile.split(".")
 	patientID = splitFileName[0]
 
+	if patientID not in patientsWithExprData:
+		patientsNoExpr.append(patientID)
 	#Load the contents of the file
 	with open(snvDir + "/" + currentFile, 'r') as inF:
 		lineCount = 0
@@ -109,20 +130,78 @@ for currentFile in allFiles:
 					mutatedGenesCount[geneName] = 0
 				mutatedGenesCount[geneName] += 1
 				
+				
+				
 				if patientID in patientsWithExprData: #Check if we also have expression data for this patient
 					mutations.append(splitLine) 
-					print splitLine
-					if patientID not in patientsWithMutations:
-						patientsWithMutations.append(patientID)
+					if patientID not in patientsWithSNVMutations:
+						patientsWithSNVMutations.append(patientID)
 						if geneName not in mutatedGenesCountWithExpression:
 							mutatedGenesCountWithExpression[geneName] = 0
 						mutatedGenesCountWithExpression[geneName] += 1
 			else: #if the patient does not have the mutation
 				if patientID in patientsWithExprData:
-					if patientID not in patientsWithoutMutations:
-						patientsWithoutMutations.append(patientID)
+					if patientID not in patientsWithoutSNVMutations:
+						patientsWithoutSNVMutations.append(patientID)
+
 mutations = np.array(mutations, dtype="object")
+print len(patientsNoExpr)
 #np.savetxt("mutations_ctcf.txt", mutations, delimiter="\t", fmt='%s')
+
+#Get patients with CNVs (deletions primarily)
+cnvFile = sys.argv[4]
+patientsWithDeletions = []
+patientsWithoutDeletions = []
+with open(cnvFile, 'r') as f:
+	
+	lineCount = 0
+	for line in f:
+		if lineCount < 1:
+			lineCount += 1
+			continue
+
+		line = line.strip()
+		splitLine = line.split("\t")
+		
+		#convert the sample name to the same format as for the snvs
+		splitSampleName = splitLine[0].split("-")
+		
+		code = int("".join(list(splitSampleName[3])[0:2])) #skip normal sample portions
+		if code > 9:
+			continue
+		
+		#convert the sample name to the same format as for the snvs
+		firstSamplePart = "-".join(splitSampleName[0:3])
+		shortSampleName = firstSamplePart + '-' + splitSampleName[6]
+		
+		if shortSampleName not in patientsWithExprData: #Check if we also have expression data for this patient
+			continue
+		#Check if there is a change at the location containing CTCF
+		if 'chr' + splitLine[1] == geneLocations[0][0]:
+			
+			if int(splitLine[2]) <= geneLocations[0][2] and int(splitLine[3]) >= geneLocations[0][1]: #CTCF overlaps this segment
+				if float(splitLine[5]) < 0: #assume that this is a deletion
+					if shortSampleName not in patientsWithDeletions:
+						patientsWithDeletions.append(shortSampleName)
+						continue
+					
+		if shortSampleName not in patientsWithoutDeletions:
+			patientsWithoutDeletions.append(shortSampleName)
+
+print("patients with deletions: ", len(patientsWithDeletions))
+print("patients without deletions: ", len(patientsWithoutDeletions))
+
+		
+#patientsWithMutations = np.unique(patientsWithDeletions + patientsWithSNVMutations)
+#patientsWithoutMutations = np.unique(patientsWithoutDeletions + patientsWithoutSNVMutations)
+
+patientsWithMutations = patientsWithSNVMutations
+patientsWithoutMutations = patientsWithoutSNVMutations
+
+#merge patients with SNV mutation patients
+print("number of patients with both SNVs and deletions: ", len(patientsWithMutations))
+print("number of patients without both SNVs and deletions: ", len(patientsWithoutMutations))
+
 
 #T-test for the overall case
 from statsmodels.sandbox.stats.multicomp import multipletests
@@ -262,23 +341,22 @@ for pValueInd in range(0, len(cosmicGenePValuesOneSided)):
 	
 	if reject[pValueInd] == True and np.sign(cosmicGeneTStat[pValueInd,1]) == 1:
 		
-		
 		pValue = pAdjusted[pValueInd]
 		filteredPValues.append([cosmicGenePValuesOneSided[pValueInd,0], cosmicGenePValuesOneSided[pValueInd,1]])
 		pair = cosmicGenePValuesOneSided[pValueInd,0]
 		splitPair = pair.split("_")
 		
 		#print splitPair[0] + "\t" + splitPair[1] + "\t" + str(expression[pair][0]) + "\t" + str(expression[pair][1]) + "\t" + str(pAdjusted[pValueInd]) + "\t" + str(cosmicGeneTStat[pValueInd,1])
-		plt.clf()
-		plt.hist(expression[pair][1])
-		plt.axvline(expression[pair][0], color='k', linestyle='dashed', linewidth=1)
-		plt.savefig('expressionPlots/' + pair + '.svg')
+		#plt.clf()
+		#plt.hist(expression[pair][1])
+		#plt.axvline(expression[pair][0], color='k', linestyle='dashed', linewidth=1)
+		#plt.savefig('expressionPlots/' + pair + '.svg')
 		
 		# print cosmicGeneTStat[pValueInd,1]
 		signGenes.append(cosmicGenePValuesOneSided[pValueInd,0])
 filteredPValues = np.array(filteredPValues, dtype="object")
 
-np.savetxt("significantCosmicGenes_bonferroni_oneS.txt", filteredPValues, fmt="%s", delimiter="\t")
+np.savetxt("UCEC_significantAllGenes_bonferroni_oneS_snvs.txt", filteredPValues, fmt="%s", delimiter="\t")
 
 
 exit()
