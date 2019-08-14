@@ -104,6 +104,7 @@ print len(allFiles)
 
 patientsNoExpr = []
 mutations = []
+allSNVPatients = []
 for currentFile in allFiles:
 	
 	if currentFile == "MANIFEST.txt":
@@ -113,6 +114,10 @@ for currentFile in allFiles:
 
 	if patientID not in patientsWithExprData:
 		patientsNoExpr.append(patientID)
+		
+	if patientID not in allSNVPatients:
+		allSNVPatients.append(patientID)
+		
 	#Load the contents of the file
 	with open(snvDir + "/" + currentFile, 'r') as inF:
 		lineCount = 0
@@ -152,6 +157,7 @@ print len(patientsNoExpr)
 cnvFile = sys.argv[4]
 patientsWithDeletions = []
 patientsWithoutDeletions = []
+allCNVPatients = []
 with open(cnvFile, 'r') as f:
 	
 	lineCount = 0
@@ -174,6 +180,9 @@ with open(cnvFile, 'r') as f:
 		firstSamplePart = "-".join(splitSampleName[0:3])
 		shortSampleName = firstSamplePart + '-' + splitSampleName[6]
 		
+		if shortSampleName not in allCNVPatients:
+			allCNVPatients.append(shortSampleName)
+		
 		if shortSampleName not in patientsWithExprData: #Check if we also have expression data for this patient
 			continue
 		#Check if there is a change at the location containing CTCF
@@ -192,15 +201,63 @@ print("patients with deletions: ", len(patientsWithDeletions))
 print("patients without deletions: ", len(patientsWithoutDeletions))
 
 		
-#patientsWithMutations = np.unique(patientsWithDeletions + patientsWithSNVMutations)
-#patientsWithoutMutations = np.unique(patientsWithoutDeletions + patientsWithoutSNVMutations)
+patientsWithMutations = np.unique(patientsWithDeletions + patientsWithSNVMutations)
+#make sure here when combining that we do not re-include patients that do have mutations in one data type but not in another
+patientsWithoutMutationsOriginal = np.unique(patientsWithoutDeletions + patientsWithoutSNVMutations)
+patientsWithoutMutations = []
+for patient in patientsWithoutMutationsOriginal:
+	if patient not in patientsWithMutations:
+		patientsWithoutMutations.append(patient)
 
-patientsWithMutations = patientsWithSNVMutations
-patientsWithoutMutations = patientsWithoutSNVMutations
+
+#Which patients have snv data? which have cnv?
+snv = set(patientsWithMutations) & set(allSNVPatients)
+print("snv", len(snv))
+cnv = set(patientsWithMutations) & set(allCNVPatients)
+print("cnv", len(cnv))
+
+snv = set(patientsWithoutMutations) & set(allSNVPatients)
+print("snv", len(snv))
+cnv = set(patientsWithoutMutations) & set(allCNVPatients)
+print("cnv", len(cnv))
+
+#patientsWithMutations = patientsWithSNVMutations
+#patientsWithoutMutations = patientsWithoutSNVMutations
 
 #merge patients with SNV mutation patients
 print("number of patients with both SNVs and deletions: ", len(patientsWithMutations))
 print("number of patients without both SNVs and deletions: ", len(patientsWithoutMutations))
+
+#print some statistics, what is the overlap between the datasets?
+#s = snvs, c = cnvs, m = mRNAseq
+
+#scm = patients shared between all 3 datasets
+#sc = patients shared between s & c - scm
+#s = s - scm - sc - sm
+
+scmPatients = set(patientsWithExprData) & set(allSNVPatients) & set(allCNVPatients)
+scPatients = set(allSNVPatients) & set(allCNVPatients)
+smPatients = set(patientsWithExprData) & set(allSNVPatients)
+mcPatients = set(patientsWithExprData) & set(allCNVPatients)
+
+scm = len(scmPatients)
+sc = len(scPatients) - scm
+sm = len(smPatients) - scm
+mc = len(mcPatients) - scm
+s = len(allSNVPatients) - scm - sc - sm
+m = len(patientsWithExprData) - scm - mc - sm
+c = len(allCNVPatients) - scm - sc - mc
+
+print('scm', scm)
+print('sc', sc)
+print('sm', sm)
+print('cm', mc)
+print('s', s)
+print('c', c)
+print('m', m)
+
+allPatients = np.unique(np.concatenate((patientsWithExprData, allSNVPatients, allCNVPatients)))
+print("all patients", len(allPatients))
 
 
 #T-test for the overall case
@@ -356,7 +413,7 @@ for pValueInd in range(0, len(cosmicGenePValuesOneSided)):
 		signGenes.append(cosmicGenePValuesOneSided[pValueInd,0])
 filteredPValues = np.array(filteredPValues, dtype="object")
 
-np.savetxt("UCEC_significantAllGenes_bonferroni_oneS_snvs.txt", filteredPValues, fmt="%s", delimiter="\t")
+np.savetxt("UCEC_significantAllGenes_bonferroni_oneS_snvsAndDeletions.txt", filteredPValues, fmt="%s", delimiter="\t")
 
 
 exit()

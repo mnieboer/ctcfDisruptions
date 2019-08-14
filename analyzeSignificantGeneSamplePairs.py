@@ -458,6 +458,6 @@ for pair in pairList:
 	pairInfo.append([splitPair[0], splitPair[1], pair[1], cosmic, noOfSamples, snv, snvSignificant, snvSignificance, sv, svSignificant, svSignificance])	
 
 pairInfo = np.array(pairInfo, dtype='object')
-header = 'gene\tsample\tp-value_CTCF_vs_non-CTCF\tCOSMIC\tnumber_of_samples_in_which_deg\tsnv\tsnv_significant\tsnv_p-value\tsv\tsv_significant\tsv_significance'
+header = 'Gene\tSample\tP-value_mutated_CTCF_vs_non-mutated_CTCF\tCOSMIC\tNumber_of_samples_in_which_DEG\tSNV?\tSNV_significant?\tSNV_p-value\tSV?\tSV_significant?\tSV_significance'
 np.savetxt(sys.argv[6], pairInfo, header=header, fmt='%s', delimiter='\t')
 
