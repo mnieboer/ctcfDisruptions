@@ -68,6 +68,7 @@ print len(allFiles)
 
 degsWithSNVEvidence = []
 snvPatientIds = []
+mutationInfo = dict() #for each gene-sample combination with an SNV, also keep the relevant information so that we can write it to the output table. 
 for currentFile in allFiles:
 	
 	if currentFile == "MANIFEST.txt":
@@ -78,17 +79,35 @@ for currentFile in allFiles:
 	#Load the contents of the file
 	with open(snvDir + "/" + currentFile, 'r') as inF:
 		lineCount = 0
+		header = dict()
 		for line in inF:
 			line = line.strip() #remove newlines
+			splitLine = line.split("\t")
 			if lineCount < 1: #only read the line if it is not a header line
+				for fieldInd in range(0, len(splitLine)):
+					header[splitLine[fieldInd]] = fieldInd
 				lineCount += 1
 				continue
 
-			splitLine = line.split("\t")
+			
 			geneName = splitLine[0]
 			
 			pair = geneName + "_" + patientID
 			snvPatientIds.append(pair)
+			
+			#position is usually denoted as 'chr:start-end'
+			chromosome = splitLine[header['Chromosome']]
+			if 'Start_Position' in header: #thanks TCGA for being consistent
+				start = splitLine[header['Start_Position']]
+				end = splitLine[header['End_Position']]
+			else:
+				start = splitLine[header['Start_position']]
+				end = splitLine[header['End_position']]
+			varType = splitLine[header['Variant_Classification']]
+			ref = splitLine[header['Reference_Allele']]
+			var = splitLine[header['Tumor_Seq_Allele2']]
+			
+			mutationInfo[pair] = [chromosome + ":" + start + "-" + end, varType, ref, var]
 		
 			if pair in shortSampleNamePairs:
 				
@@ -246,16 +265,15 @@ if len(degsWithSNVEvidence) > 0:
 #These are all SVs that overlap at least 1 gene, output from the rule-based prioritizer. 
 codingPairs = np.loadtxt(sys.argv[4], dtype='object')
 degsWithSVEvidence = []
+degsWithSVEvidenceSVInfo = [] #also keep more information about the SV for later reference. 
 
-codingPairsShortSampleNames = []
-
+codingPairsShortSampleNames = dict()
 for pair in codingPairs:
 	
 	splitPair = pair.split("_")
 	gene = splitPair[0]
 	sample = splitPair[len(splitPair)-1]
-	codingPairsShortSampleNames.append(gene + "_" + sample)
-	
+	codingPairsShortSampleNames[gene + "_" + sample] = pair
 
 for degPair in pairList[:,0]:
 	
@@ -265,11 +283,11 @@ for degPair in pairList[:,0]:
 	splitSampleName = splitDegPair[1].split("-")
 	sampleCode = splitSampleName[2]
 	
-	convertedSampleName = 'brca' + sampleCode
+	#convertedSampleName = 'brca' + sampleCode
 	
 	#Convert for UCEC
-	#firstSamplePart = "-".join(splitSampleName[0:3])
-	#convertedSampleName = firstSamplePart
+	firstSamplePart = "-".join(splitSampleName[0:3])
+	convertedSampleName = firstSamplePart
 
 	if degGene + "_" + convertedSampleName in codingPairsShortSampleNames:
 		
@@ -412,7 +430,130 @@ with open(cosmicGeneFile, 'r') as inF:
 			lineCount += 1
 		cosmicGenes.append(line.split("\t")[0])
 		lineCount += 1
+
+svFile = sys.argv[6] #provide the orignal SV file to get SV info
+
+svInfo = dict() #keep relevant SV info for each sample. The sample names will not match here on the pair info, this is missing from the sv file
+with open(svFile, 'r') as f:
 	
+	lineCount = 0
+	header = []
+	for line in f:
+		line = line.strip()
+		splitLine = line.split("\t")
+		
+		#First extract the header and store it in the dictionary to remove dependency on the order of columns in the file
+		if lineCount < 1:
+
+			header = splitLine
+			lineCount += 1
+			continue
+		
+		#Now extract the chromosome, start and end (there are multiple, 2 for an SV)
+		chr1Index = header.index("chr1")
+		s1Index = header.index("s1")
+		e1Index = header.index("e1")
+		o1Index = header.index("o1")
+
+		chr2Index = header.index("chr2")
+		s2Index = header.index("s2")
+		e2Index = header.index("e2")
+		o2Index = header.index("o2")
+
+		
+		svTypeIndex = header.index("sv_type")
+		svType = splitLine[svTypeIndex]
+		
+		#If the coordinates are missing on the second chromosome, we use the coordinates of the first chromosome unless chr 1 and chr 2 are different.
+		if splitLine[chr1Index] == splitLine[chr2Index]:
+			if splitLine[s2Index] == 'NaN':
+				splitLine[s2Index] = int(splitLine[s1Index])
+				
+			if splitLine[e2Index] == 'NaN':
+				splitLine[e2Index] = int(splitLine[e1Index])
+		else:
+			if splitLine[chr2Index] == 'NaN':
+				continue # This line does not have correct chromosome 2 information (should we be skipping it?)
+		
+		s1 = int(splitLine[s1Index])
+		e1 = int(float(splitLine[e1Index]))
+		s2 = int(splitLine[s2Index])
+		e2 = int(float(splitLine[e2Index]))
+		chr2 = splitLine[chr2Index]
+		
+		chr1 = splitLine[chr1Index]
+		o1 = splitLine[o1Index]
+		o2 = splitLine[o2Index]
+		
+		#Make sure to switch the positions here as well
+		#Some positions are swapped
+		if int(e2) < int(e1):
+			tmpE1 = e1
+			e1 = e2
+			e2 = tmpE1
+			tmpS1 = s1
+			s1 = s2
+			s2 = tmpS1
+		
+		#Sometimes only the end is swapped.
+		if int(e2) < int(s2):
+			tmpS2 = s2
+			s2 = e2
+			e2 = tmpS2
+			
+		if int(e1) < int(s1):
+			tmpS1 = s1
+			s1 = e1
+			e1 = tmpS1
+		sampleNameIndex = header.index("sample_name")
+		sampleName = splitLine[sampleNameIndex]
+
+		if list(chr1)[0] == "c": #add the chr notation only when it is not already there
+			
+			#Check if this SV needs to be exluded
+			svStr = chr1 + "_" + str(s1) + "_" + str(e1) + "_" + chr2 + "_" + str(s2) + "_" + str(e2) + "_" + sampleName
+			
+			svInfo[svStr] = [chr1, s1, e1, o1, chr2, s2, e2, o2, svType, sampleName]
+			
+		else:
+			
+			#Check if this SV needs to be exluded
+			svStr = 'chr' + chr1 + "_" + str(s1) + "_" + str(e1) + "_" + 'chr' + chr2 + "_" + str(s2) + "_" + str(e2) + "_" + sampleName
+			
+			svInfo[svStr] = ['chr' + chr1, s1, e1, o1, 'chr' + chr2, s2, e2, o2, svType, sampleName]
+
+#Get the SVs in CTCF as well and report these
+cnvFile = sys.argv[7]
+ctcfDels = dict()
+geneLocations = [['chr16', 67596310, 67673088]] #location of CTCF
+with open(cnvFile, 'r') as f:
+	
+	lineCount = 0
+	for line in f:
+		if lineCount < 1:
+			lineCount += 1
+			continue
+
+		line = line.strip()
+		splitLine = line.split("\t")
+		
+		#convert the sample name to the same format as for the snvs
+		splitSampleName = splitLine[0].split("-")
+		
+		code = int("".join(list(splitSampleName[3])[0:2])) #skip normal sample portions
+		if code > 9:
+			continue
+		
+		#convert the sample name to the same format as for the snvs
+		firstSamplePart = "-".join(splitSampleName[0:3])
+		shortSampleName = firstSamplePart + '-' + splitSampleName[6]
+		
+		#Check if there is a change at the location containing CTCF
+		if 'chr' + splitLine[1] == geneLocations[0][0]:
+			
+			if int(splitLine[2]) <= geneLocations[0][2] and int(splitLine[3]) >= geneLocations[0][1]: #CTCF overlaps this segment
+				if float(splitLine[5]) < 0: #assume that this is a deletion
+					ctcfDels['CTCF_' + shortSampleName] = ['chr' + splitLine[1], splitLine[2], splitLine[3], splitLine[5]]
 
 header = ''
 pairInfo = []
@@ -426,14 +567,42 @@ for pair in pairList:
 		cosmic = 'True'
 	noOfSamples = geneOccurrenceCounts[gene]
 	
+	#get info about the mutation in CTCF, this depends on if it has an SNV or deletion
+	ctcfPair = 'CTCF_' + shortSampleName
+	ctcfSNVPos = ''
+	ctcfSNVType = ''
+	ctcfSNVRef = ''
+	ctcfSNVAlt = ''
+	ctcfSVPos = ''
+	ctcfSVSegmentVal = ''
+	if ctcfPair in mutationInfo:
+		ctcfSNVPos = 'chr' + mutationInfo[ctcfPair][0]
+		ctcfSNVType = mutationInfo[ctcfPair][1]
+		ctcfSNVRef = mutationInfo[ctcfPair][2]
+		ctcfSNVAlt = mutationInfo[ctcfPair][3]
+		
+	if ctcfPair in ctcfDels:
+		ctcfSVPos = ctcfDels[ctcfPair][0] + ':' + ctcfDels[ctcfPair][1] + '-' + ctcfDels[ctcfPair][2]
+		ctcfSVSegmentVal = ctcfDels[ctcfPair][3]
+	
 	#Check if there is an SNV for this gene in any sample
 	#This needs the original identifier
 	shortSampleName = shortSampleNameLookup[splitPair[1]]
+	
+	shortPair = gene + '_' + shortSampleName
 	snv = 'False'
 	snvSignificant = 'False'
-	snvSignificance = '-'
+	snvSignificance = ''
+	snvPos = ''
+	snvClassification = ''
+	snvRef = ''
+	snvAlt = ''
 	if gene + '_' + shortSampleName in degsWithSNVEvidence:
 		snv = 'True'
+		snvPos = 'chr' + mutationInfo[shortPair][0]
+		snvClassification = mutationInfo[shortPair][1]
+		snvRef = mutationInfo[shortPair][2]
+		snvAlt = mutationInfo[shortPair][3]
 		if gene + '_' + shortSampleName in snvDEGPairs[:,0]:
 			if np.sign(zScoresSnv[gene + '_' + shortSampleName]) == 1:
 				snvSignificant = 'True'
@@ -441,23 +610,44 @@ for pair in pairList:
 				
 	
 	#Repeat for SVs
-	
-	shortSampleName = shortSampleNameLookup[splitPair[1]]
-	
 	sv = 'False'
 	svSignificant = 'False'
-	svSignificance = '-'
+	svSignificance = ''
+	svPosChr1 = ''
+	svPosChr2 = ''
+	svType = ''
+	svO1 = ''
+	svO2 = ''
 	if gene + '_' + shortSampleName in degsWithSVEvidence:
 		sv = 'True'
+		
+		#depending on the data type, the format of the SVs will be different.
+		
+		if re.search("BRCA", sys.argv[1], re.IGNORECASE):
+			splitSampleName = splitPair[1].split("-")
+			sampleCode = splitSampleName[2]
+			
+			convertedSampleName = 'brca' + sampleCode
+			svGenePair = codingPairsShortSampleNames[gene + '_' + convertedSampleName]
+			svData = "_".join(svGenePair.split("_")[1:])
+			svPosChr1 = svInfo[svData][0] + ':' + str(svInfo[svData][1]) + '-' + str(svInfo[svData][2])
+			svPosChr2 = svInfo[svData][4] + ':' + str(svInfo[svData][5]) + '-' + str(svInfo[svData][6])
+			svO1 = svInfo[svData][3]
+			svO2 = svInfo[svData][7]
+			svType = svInfo[svData][8]
+			
 		if gene + '_' + shortSampleName in svDEGPairs[:,0]:
 			if np.sign(zScoresSv[gene + '_' + shortSampleName]) == 1:
 				svSignificant = 'True'
 				svSignificance = svDEGPairs[svDEGPairs[:,0] == gene + '_' + shortSampleName,1][0]
 	
 	#Collect all information about this pair
-	pairInfo.append([splitPair[0], splitPair[1], pair[1], cosmic, noOfSamples, snv, snvSignificant, snvSignificance, sv, svSignificant, svSignificance])	
+	pairInfo.append([splitPair[0], splitPair[1], pair[1], cosmic, noOfSamples, ctcfSNVPos, ctcfSNVType, ctcfSNVRef, ctcfSNVAlt,
+					 ctcfSVPos, ctcfSVSegmentVal, snv, 
+					snvPos, snvClassification, snvRef, snvAlt, snvSignificant, snvSignificance,
+					sv,svPosChr1, svPosChr2, svType, svO1, svO2, svSignificant, svSignificance])	
 
 pairInfo = np.array(pairInfo, dtype='object')
-header = 'Gene\tSample\tP-value_mutated_CTCF_vs_non-mutated_CTCF\tCOSMIC\tNumber_of_samples_in_which_DEG\tSNV?\tSNV_significant?\tSNV_p-value\tSV?\tSV_significant?\tSV_significance'
-np.savetxt(sys.argv[6], pairInfo, header=header, fmt='%s', delimiter='\t')
+header = 'Gene\tSample\tP-value_mutated_CTCF_vs_non-mutated_CTCF\tCOSMIC\tNumber_of_samples_in_which_DEG\tCTCF_SNV_pos\tCTCF_SNV_type\tCTCF_SNV_ref\tCTCF_SNV_alt\tCTCF_del_pos\tCTCF_del_segment_value\tSNV?\tSNV_pos\tSNV_classification\tSNV_ref\tSNV_alt\tSNV_significant?\tSNV_p-value\tSV?\tSV_pos_chr1\tSV_pos_chr2\tSV_type\tSV_orientation_chr1\tSV_orientation_chr2\tSV_significant?\tSV_significance'
+np.savetxt(sys.argv[8], pairInfo, header=header, fmt='%s', delimiter='\t')
 

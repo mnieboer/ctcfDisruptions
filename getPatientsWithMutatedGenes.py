@@ -259,6 +259,20 @@ print('m', m)
 allPatients = np.unique(np.concatenate((patientsWithExprData, allSNVPatients, allCNVPatients)))
 print("all patients", len(allPatients))
 
+mutPatients = np.unique(np.concatenate((patientsWithMutations, patientsWithoutMutations)))
+missingPatients = np.setdiff1d(allPatients, mutPatients)
+print(mutPatients)
+print(missingPatients)
+print(len(missingPatients))
+
+noExpr = np.setdiff1d(missingPatients, patientsWithExprData)
+print(len(noExpr))
+noExpr = np.setdiff1d(missingPatients, allSNVPatients)
+print(len(noExpr))
+noExpr = np.setdiff1d(missingPatients, allCNVPatients)
+print(len(noExpr))
+
+
 
 #T-test for the overall case
 from statsmodels.sandbox.stats.multicomp import multipletests
@@ -399,7 +413,7 @@ for pValueInd in range(0, len(cosmicGenePValuesOneSided)):
 	if reject[pValueInd] == True and np.sign(cosmicGeneTStat[pValueInd,1]) == 1:
 		
 		pValue = pAdjusted[pValueInd]
-		filteredPValues.append([cosmicGenePValuesOneSided[pValueInd,0], cosmicGenePValuesOneSided[pValueInd,1]])
+		filteredPValues.append([cosmicGenePValuesOneSided[pValueInd,0], pValue])
 		pair = cosmicGenePValuesOneSided[pValueInd,0]
 		splitPair = pair.split("_")
 		
@@ -413,7 +427,7 @@ for pValueInd in range(0, len(cosmicGenePValuesOneSided)):
 		signGenes.append(cosmicGenePValuesOneSided[pValueInd,0])
 filteredPValues = np.array(filteredPValues, dtype="object")
 
-np.savetxt("UCEC_significantAllGenes_bonferroni_oneS_snvsAndDeletions.txt", filteredPValues, fmt="%s", delimiter="\t")
+np.savetxt("BRCA_significantAllGenes_bonferroni_oneS_snvsAndDeletions.txt", filteredPValues, fmt="%s", delimiter="\t")
 
 
 exit()
